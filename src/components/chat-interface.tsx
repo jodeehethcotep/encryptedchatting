@@ -22,11 +22,17 @@ type Message = {
     seenAt: Timestamp | null;
 };
 
+type Presence = {
+    status: 'online' | 'offline';
+    last_active: Timestamp;
+};
+
 type SessionData = {
     selfDestructSeconds: number;
     selfDestructUnseenSeconds: number;
     participants: string[];
     participantCount: number;
+    presence: Record<string, Presence>;
 };
 
 export function ChatInterface({ sessionId }: { sessionId: string }) {
@@ -42,6 +48,11 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
         if (!sessionData?.participants || !userId) return null;
         return sessionData.participants.find(p => p !== userId) || null;
     }, [sessionData, userId]);
+
+    const isOtherUserOnline = useMemo(() => {
+        if (!sessionData?.presence || !otherParticipantId) return false;
+        return sessionData.presence[otherParticipantId]?.status === 'online';
+    }, [sessionData, otherParticipantId]);
 
     useEffect(() => {
         let currentUserId = sessionStorage.getItem(`secretchat-userId-${sessionId}`);
@@ -63,6 +74,25 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
         return () => unsubscribe();
     }, [sessionId, router]);
+    
+    useEffect(() => {
+        if (!userId) return;
+
+        const sessionDocRef = doc(db, 'sessions', sessionId);
+        updateDoc(sessionDocRef, {
+            [`presence.${userId}.status`]: 'online',
+            [`presence.${userId}.last_active`]: serverTimestamp()
+        }).catch(() => {});
+
+        return () => {
+             updateDoc(sessionDocRef, {
+                [`presence.${userId}.status`]: 'offline',
+                [`presence.${userId}.last_active`]: serverTimestamp()
+            }).catch(() => {});
+        };
+
+    }, [sessionId, userId]);
+
 
     const handleLeaveChat = useCallback(async () => {
         if (!userId) return;
@@ -72,13 +102,17 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             await runTransaction(db, async (transaction) => {
                 const sessionDoc = await transaction.get(sessionDocRef);
                 if (!sessionDoc.exists()) return;
-
-                const currentParticipants = sessionDoc.data().participants || [];
+                
+                const data = sessionDoc.data();
+                const currentParticipants = data.participants || [];
                 const newParticipants = currentParticipants.filter((p: string) => p !== userId);
+                const newPresence = data.presence || {};
+                delete newPresence[userId];
 
                 transaction.update(sessionDocRef, {
                     participants: newParticipants,
-                    participantCount: newParticipants.length
+                    participantCount: newParticipants.length,
+                    presence: newPresence
                 });
 
                 if (currentParticipants.includes(userId)) {
@@ -260,11 +294,19 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
         <TooltipProvider>
             <div className="flex flex-col h-screen bg-background">
                 <header className="flex items-center justify-between p-4 border-b shrink-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-4">
                         <Button variant="ghost" size="icon" onClick={handleLeaveChat}>
                             <ArrowLeft />
                         </Button>
-                        <h1 className="text-xl font-bold text-primary truncate">Room: {sessionId}</h1>
+                        <div className="flex items-center gap-3">
+                           <h1 className="text-xl font-bold text-primary truncate">Room: {sessionId}</h1>
+                           {otherParticipantId && (
+                                <div className="flex items-center gap-1.5">
+                                    <span className={`h-2.5 w-2.5 rounded-full ${isOtherUserOnline ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                                    <span className="text-xs text-muted-foreground">{isOtherUserOnline ? 'Online' : 'Offline'}</span>
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <Tooltip>
                         <TooltipTrigger asChild>

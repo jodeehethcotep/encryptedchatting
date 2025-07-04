@@ -85,6 +85,12 @@ export function CreateChatForm() {
         createdAt: serverTimestamp(),
         participantCount: 1,
         participants: [userId],
+        presence: {
+          [userId]: {
+            status: 'online',
+            last_active: serverTimestamp(),
+          },
+        },
       };
       
       const sessionDocRef = doc(db, 'sessions', sessionId);

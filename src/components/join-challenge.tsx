@@ -11,14 +11,20 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Terminal } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, runTransaction, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, collection, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { addChatSession } from '@/lib/storage';
+
+type Presence = {
+    status: 'online' | 'offline';
+    last_active: Timestamp;
+};
 
 type SessionData = {
     selfDestructSeconds: number;
     kickOnWrongAnswer: boolean;
     participants: string[];
     participantCount: number;
+    presence: Record<string, Presence>;
     questions: {
         question: string;
         options: { text: string }[];
@@ -97,7 +103,11 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
                 const newParticipants = [...participants, userId];
                 transaction.update(sessionDocRef, { 
                     participants: newParticipants,
-                    participantCount: newParticipants.length 
+                    participantCount: newParticipants.length,
+                     [`presence.${userId}`]: {
+                        status: 'online',
+                        last_active: serverTimestamp(),
+                    }
                 });
                 
                 const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
