@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,7 +9,7 @@ import { Send, Paperclip, ShieldAlert, ArrowLeft, Eye } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Image from 'next/image';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp, runTransaction, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp, runTransaction, updateDoc, writeBatch, setDoc } from 'firebase/firestore';
 
 type Message = {
     id: string;
@@ -36,12 +36,15 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     const messagesEndRef = useRef<null | HTMLDivElement>(null);
     const [userId, setUserId] = useState('');
     const destructionTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
-    const [otherParticipantId, setOtherParticipantId] = useState<string | null>(null);
+
+    const otherParticipantId = useMemo(() => {
+        if (!sessionData?.participants || !userId) return null;
+        return sessionData.participants.find(p => p !== userId) || null;
+    }, [sessionData, userId]);
 
     useEffect(() => {
         let currentUserId = sessionStorage.getItem(`secretchat-userId-${sessionId}`);
         if (!currentUserId) {
-            // This should not happen if user joined correctly, but as a fallback.
             router.push(`/join/${sessionId}`);
             return;
         }
@@ -52,8 +55,6 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             if (doc.exists()) {
                 const data = doc.data() as SessionData;
                 setSessionData(data);
-                const otherUser = data.participants?.find(p => p !== currentUserId);
-                setOtherParticipantId(otherUser || null);
             } else {
                 router.push('/');
             }
@@ -81,14 +82,14 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
                 if (currentParticipants.includes(userId)) {
                     const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
-                    const systemMessage = {
+                    const newSystemMessageRef = doc(messagesColRef);
+                    transaction.set(newSystemMessageRef, {
                         text: `${userId.substring(0, 12)} has left the chat.`,
                         senderId: 'system',
                         type: 'system',
                         createdAt: serverTimestamp(),
                         seenAt: null
-                    };
-                    await addDoc(messagesColRef, systemMessage);
+                    });
                 }
             });
         } catch (error) {
@@ -145,13 +146,11 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 };
                 fetchedMessages.push(message);
 
-                // Mark message as seen
                 if (otherParticipantId && message.senderId === otherParticipantId && !message.seenAt) {
                     batch.update(doc.ref, { seenAt: serverTimestamp() });
                     updatesMade = true;
                 }
 
-                // Self-destruct logic based on seenAt
                 if (sessionData.selfDestructSeconds > 0 && message.sender !== 'System' && message.seenAt) {
                     if (destructionTimers.current.has(doc.id)) {
                         return;
