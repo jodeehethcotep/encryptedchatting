@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Send, Paperclip, ShieldAlert } from 'lucide-react';
+import { Send, Paperclip, ShieldAlert, ArrowLeft } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Image from 'next/image';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { addChatSession } from '@/lib/storage';
 
 type Message = {
     id: string;
@@ -33,6 +34,10 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     const messagesEndRef = useRef<null | HTMLDivElement>(null);
     const [userId, setUserId] = useState('');
     const destructionTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+    useEffect(() => {
+        addChatSession(sessionId);
+    }, [sessionId]);
 
     useEffect(() => {
         let currentUserId = sessionStorage.getItem(`secretchat-userId-${sessionId}`);
@@ -175,7 +180,12 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
         <TooltipProvider>
             <div className="flex flex-col h-screen bg-background">
                 <header className="flex items-center justify-between p-4 border-b shrink-0">
-                    <h1 className="text-xl font-bold text-primary">Secret Room: {sessionId}</h1>
+                    <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="icon" onClick={() => router.push('/')}>
+                            <ArrowLeft />
+                        </Button>
+                        <h1 className="text-xl font-bold text-primary">Secret Room: {sessionId}</h1>
+                    </div>
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <div className="flex items-center gap-2 text-muted-foreground">

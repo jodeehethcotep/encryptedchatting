@@ -12,6 +12,7 @@ import { Loader2, Terminal } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import { addChatSession } from '@/lib/storage';
 
 type SessionData = {
     selfDestructSeconds: number;
@@ -39,6 +40,7 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
                 if (sessionDoc.exists()) {
                     const parsedData = sessionDoc.data() as SessionData;
                     if (!parsedData.questions || parsedData.questions.length === 0) {
+                        addChatSession(sessionId);
                         router.push(`/chat/${sessionId}`);
                     } else {
                         setSession(parsedData);
@@ -72,6 +74,7 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
         }
         
         if (allCorrect) {
+            addChatSession(sessionId);
             router.push(`/chat/${sessionId}`);
         } else {
             if (session.kickOnWrongAnswer) {

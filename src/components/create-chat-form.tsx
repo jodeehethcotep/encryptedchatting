@@ -18,6 +18,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/firebase';
 import { doc, setDoc } from 'firebase/firestore';
+import { addChatSession } from '@/lib/storage';
 
 const optionSchema = z.object({
   text: z.string().min(1, 'Option text cannot be empty.'),
@@ -71,6 +72,8 @@ export function CreateChatForm() {
       const sessionDocRef = doc(db, 'sessions', sessionId);
       await setDoc(sessionDocRef, sessionData);
       
+      addChatSession(sessionId);
+
       router.push(`/chat/${sessionId}`);
     } catch (error: any) {
       console.error("Error creating session:", error);
