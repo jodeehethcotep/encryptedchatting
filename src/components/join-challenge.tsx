@@ -10,6 +10,8 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Terminal } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { db } from '@/lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 type SessionData = {
     selfDestructSeconds: number;
@@ -29,23 +31,29 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
     const [showKickDialog, setShowKickDialog] = useState(false);
 
     useEffect(() => {
-        try {
-            const data = localStorage.getItem(`secretchat-session-${sessionId}`);
-            if (data) {
-                const parsedData = JSON.parse(data);
-                if (!parsedData.questions || parsedData.questions.length === 0) {
-                    router.push(`/chat/${sessionId}`);
+        const fetchSession = async () => {
+            try {
+                const sessionDocRef = doc(db, 'sessions', sessionId);
+                const sessionDoc = await getDoc(sessionDocRef);
+
+                if (sessionDoc.exists()) {
+                    const parsedData = sessionDoc.data() as SessionData;
+                    if (!parsedData.questions || parsedData.questions.length === 0) {
+                        router.push(`/chat/${sessionId}`);
+                    } else {
+                        setSession(parsedData);
+                    }
                 } else {
-                    setSession(parsedData);
+                    setError('Session not found or has expired.');
                 }
-            } else {
-                setError('Session not found or has expired.');
+            } catch (e) {
+                console.error("Failed to load session:", e);
+                setError('Failed to load session data. Please check the ID and try again.');
+            } finally {
+                setLoading(false);
             }
-        } catch (e) {
-            setError('Failed to load session data.');
-        } finally {
-            setLoading(false);
         }
+        fetchSession();
     }, [sessionId, router]);
     
     const form = useForm();
@@ -76,7 +84,7 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
     };
     
     if (loading) {
-        return <Loader2 className="h-8 w-8 animate-spin text-primary" />;
+        return <div className="flex justify-center items-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
     }
     
     if (error) {

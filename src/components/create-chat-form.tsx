@@ -16,6 +16,8 @@ import { Separator } from '@/components/ui/separator';
 import { Copy, PlusCircle, Trash2, ArrowRight } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
+import { db } from '@/lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
 
 const optionSchema = z.object({
   text: z.string().min(1, 'Option text cannot be empty.'),
@@ -58,19 +60,23 @@ export function CreateChatForm() {
     name: 'questions',
   });
 
-  const onSubmit = (data: FormValues) => {
+  const onSubmit = async (data: FormValues) => {
     try {
       const sessionData = {
         ...data,
         selfDestructSeconds: data.selfDestructSeconds[0],
         createdAt: new Date().toISOString(),
       };
-      localStorage.setItem(`secretchat-session-${sessionId}`, JSON.stringify(sessionData));
+      
+      const sessionDocRef = doc(db, 'sessions', sessionId);
+      await setDoc(sessionDocRef, sessionData);
+      
       router.push(`/chat/${sessionId}`);
     } catch (error) {
+      console.error("Error creating session:", error);
       toast({
         title: 'Error',
-        description: 'Could not create session. Your browser may not support local storage.',
+        description: 'Could not create session. Please try again.',
         variant: 'destructive'
       });
     }

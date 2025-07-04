@@ -9,13 +9,17 @@ import { Send, Paperclip, Eye, X, ShieldAlert } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Image from 'next/image';
+import { db } from '@/lib/firebase';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp } from 'firebase/firestore';
 
 type Message = {
-    id: number;
+    id: string;
     sender: 'You' | 'Other';
+    senderId: string;
     text?: string;
     imageUrl?: string;
     type: 'text' | 'image';
+    createdAt: Timestamp | null;
 };
 
 type SessionSettings = {
@@ -26,39 +30,76 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     const router = useRouter();
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState('');
-    const [settings, setSettings] = useState<SessionSettings>({ selfDestructSeconds: 15 });
-    const [imageToView, setImageToView] = useState<{ id: number, url: string } | null>(null);
+    const [settings, setSettings] = useState<SessionSettings>({ selfDestructSeconds: 0 });
+    const [imageToView, setImageToView] = useState<{ id: string, url: string } | null>(null);
     const messagesEndRef = useRef<null | HTMLDivElement>(null);
+    const [userId, setUserId] = useState('');
 
     useEffect(() => {
-        try {
-            const data = localStorage.getItem(`secretchat-session-${sessionId}`);
-            if (data) {
-                const parsedData = JSON.parse(data);
-                setSettings({ selfDestructSeconds: parsedData.selfDestructSeconds });
-            } else {
+        let currentUserId = sessionStorage.getItem(`secretchat-userId-${sessionId}`);
+        if (!currentUserId) {
+            currentUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            sessionStorage.setItem(`secretchat-userId-${sessionId}`, currentUserId);
+        }
+        setUserId(currentUserId);
+
+        const fetchSessionData = async () => {
+            try {
+                const sessionDocRef = doc(db, 'sessions', sessionId);
+                const sessionDoc = await getDoc(sessionDocRef);
+                if (sessionDoc.exists()) {
+                    setSettings({ selfDestructSeconds: sessionDoc.data().selfDestructSeconds });
+                } else {
+                    router.push('/');
+                }
+            } catch (e) {
+                console.error("Error fetching session data:", e);
                 router.push('/');
             }
-        } catch (e) {
-            router.push('/');
-        }
+        };
+
+        fetchSessionData();
     }, [sessionId, router]);
 
-    const setupDestructionTimer = useCallback((messageId: number) => {
-        setTimeout(() => {
-            setMessages(prev => prev.filter(m => m.id !== messageId));
-        }, settings.selfDestructSeconds * 1000);
-    }, [settings.selfDestructSeconds]);
-
-    // Simulate another user sending messages
     useEffect(() => {
-        const interval = setInterval(() => {
-            const botMessage: Message = { id: Date.now(), sender: 'Other', text: 'This is a secret reply!', type: 'text' };
-            setMessages(prev => [...prev, botMessage]);
-            setupDestructionTimer(botMessage.id);
-        }, 20000);
-        return () => clearInterval(interval);
-    }, [setupDestructionTimer]);
+        if (!sessionId || !userId || settings.selfDestructSeconds === 0) return;
+
+        const q = query(collection(db, 'sessions', sessionId, 'messages'), orderBy('createdAt', 'asc'));
+
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const fetchedMessages: Message[] = [];
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                const message: Message = {
+                    id: doc.id,
+                    sender: data.senderId === userId ? 'You' : 'Other',
+                    senderId: data.senderId,
+                    text: data.text,
+                    imageUrl: data.imageUrl,
+                    type: data.type,
+                    createdAt: data.createdAt
+                };
+                fetchedMessages.push(message);
+
+                if (data.createdAt && settings.selfDestructSeconds > 0 && message.type === 'text') {
+                    const messageTime = data.createdAt.toDate();
+                    const destructionTime = messageTime.getTime() + settings.selfDestructSeconds * 1000;
+                    const now = Date.now();
+                    
+                    if (destructionTime < now) {
+                        deleteDoc(doc.ref).catch(err => console.error("Error deleting old message:", err));
+                    } else {
+                        setTimeout(() => {
+                           deleteDoc(doc.ref).catch(err => console.error("Error deleting message:", err));
+                        }, destructionTime - now);
+                    }
+                }
+            });
+            setMessages(fetchedMessages);
+        });
+
+        return () => unsubscribe();
+    }, [sessionId, userId, settings.selfDestructSeconds]);
     
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -66,18 +107,27 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
     useEffect(scrollToBottom, [messages]);
     
-    const handleSendMessage = () => {
-        if (newMessage.trim()) {
-            const msg: Message = { id: Date.now(), sender: 'You', text: newMessage, type: 'text' };
-            setMessages(prev => [...prev, msg]);
-            setupDestructionTimer(msg.id);
+    const handleSendMessage = async () => {
+        if (newMessage.trim() && userId) {
+            await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+                text: newMessage,
+                senderId: userId,
+                type: 'text',
+                createdAt: serverTimestamp()
+            });
             setNewMessage('');
         }
     };
     
-    const handleSendImage = () => {
-        const msg: Message = { id: Date.now(), sender: 'You', imageUrl: `https://placehold.co/400x300.png`, type: 'image' };
-        setMessages(prev => [...prev, msg]);
+    const handleSendImage = async () => {
+        if (userId) {
+            await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+                imageUrl: `https://placehold.co/400x300.png`,
+                senderId: userId,
+                type: 'image',
+                createdAt: serverTimestamp()
+            });
+        }
     };
     
     const handleViewImage = (msg: Message) => {
@@ -88,7 +138,8 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
     const handleCloseImageView = () => {
         if (imageToView) {
-            setMessages(prev => prev.filter(m => m.id !== imageToView.id));
+            const msgRef = doc(db, 'sessions', sessionId, 'messages', imageToView.id);
+            deleteDoc(msgRef);
         }
         setImageToView(null);
     };
@@ -114,7 +165,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 <main className="flex-1 overflow-y-auto p-4 space-y-4">
                     {messages.map((msg) => (
                         <div key={msg.id} className={`flex items-end gap-2 animate-in fade-in-20 slide-in-from-bottom-4 duration-300 ${msg.sender === 'You' ? 'justify-end' : ''}`}>
-                            {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>O</AvatarFallback></Avatar>}
+                            {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>{msg.senderId.substring(0, 1).toUpperCase()}</AvatarFallback></Avatar>}
                             <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'}`}>
                                 {msg.type === 'text' && <p className="text-sm break-words">{msg.text}</p>}
                                 {msg.type === 'image' && (
@@ -151,13 +202,15 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                             <Button size="icon" onClick={handleSendMessage} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></Button>
                         </div>
                     </div>
-                    <p className="text-xs text-center text-muted-foreground mt-2">
-                        Messages will self-destruct {settings.selfDestructSeconds} seconds after being sent.
-                    </p>
+                     {settings.selfDestructSeconds > 0 && (
+                        <p className="text-xs text-center text-muted-foreground mt-2">
+                            Text messages will self-destruct {settings.selfDestructSeconds} seconds after being sent.
+                        </p>
+                    )}
                 </footer>
             </div>
             
-            <Dialog open={!!imageToView} onOpenChange={handleCloseImageView}>
+            <Dialog open={!!imageToView} onOpenChange={(isOpen) => !isOpen && handleCloseImageView()}>
                 <DialogContent className="max-w-lg p-0" onEscapeKeyDown={handleCloseImageView} onPointerDownOutside={handleCloseImageView}>
                     <DialogHeader className="p-4 flex flex-row items-center justify-between">
                         <DialogTitle>View Once Image</DialogTitle>
