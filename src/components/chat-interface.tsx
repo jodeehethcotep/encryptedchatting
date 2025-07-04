@@ -298,7 +298,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                         <Textarea
                             value={newMessage}
                             onChange={(e) => setNewMessage(e.target.value)}
-                            placeholder={otherParticipantId ? "Type an ephemeral message..." : "Waiting for another person to join..."}
+                            placeholder="Type an ephemeral message..."
                             className="pr-24"
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -306,14 +306,13 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                                     handleSendMessage();
                                 }
                             }}
-                            disabled={!otherParticipantId}
                         />
                         <div className="absolute top-1/2 right-2 transform -translate-y-1/2 flex gap-1">
                             <Tooltip>
-                                <TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={handleSendImage} disabled={!otherParticipantId}><Paperclip className="w-5 h-5" /></Button></TooltipTrigger>
+                                <TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={handleSendImage}><Paperclip className="w-5 h-5" /></Button></TooltipTrigger>
                                 <TooltipContent><p>Send an image</p></TooltipContent>
                             </Tooltip>
-                            <Button size="icon" onClick={handleSendMessage} disabled={!newMessage.trim() || !otherParticipantId}><Send className="w-5 h-5" /></Button>
+                            <Button size="icon" onClick={handleSendMessage} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></Button>
                         </div>
                     </div>
                      {sessionData?.selfDestructSeconds > 0 && (
