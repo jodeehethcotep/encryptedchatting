@@ -187,22 +187,24 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                     </Tooltip>
                 </header>
                 
-                <main className="flex-1 overflow-y-auto p-4 space-y-4">
-                    {messages.map((msg) => (
-                        <div key={msg.id} className={`flex items-end gap-2 animate-in fade-in-20 slide-in-from-bottom-4 duration-300 ${msg.sender === 'You' ? 'justify-end' : ''}`}>
-                            {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>{msg.senderId.substring(0, 1).toUpperCase()}</AvatarFallback></Avatar>}
-                            <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'}`}>
-                                {msg.type === 'text' && <p className="text-sm break-words">{msg.text}</p>}
-                                {msg.type === 'image' && (
-                                    <Button variant={msg.sender === 'You' ? 'secondary' : 'default' } onClick={() => handleViewImage(msg)} className="w-full">
-                                        <Eye className="mr-2 h-4 w-4" /> View Once Image
-                                    </Button>
-                                )}
+                <main className="flex-1 overflow-y-auto p-4 flex flex-col justify-end">
+                    <div className="space-y-4">
+                        {messages.map((msg) => (
+                            <div key={msg.id} className={`flex items-end gap-2 animate-in fade-in-20 slide-in-from-bottom-4 duration-300 ${msg.sender === 'You' ? 'justify-end' : ''}`}>
+                                {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>{msg.senderId.substring(0, 1).toUpperCase()}</AvatarFallback></Avatar>}
+                                <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'}`}>
+                                    {msg.type === 'text' && <p className="text-sm break-words">{msg.text}</p>}
+                                    {msg.type === 'image' && (
+                                        <Button variant={msg.sender === 'You' ? 'secondary' : 'default' } onClick={() => handleViewImage(msg)} className="w-full">
+                                            <Eye className="mr-2 h-4 w-4" /> View Once Image
+                                        </Button>
+                                    )}
+                                </div>
+                                {msg.sender === 'You' && <Avatar className="h-8 w-8"><AvatarFallback>Y</AvatarFallback></Avatar>}
                             </div>
-                            {msg.sender === 'You' && <Avatar className="h-8 w-8"><AvatarFallback>Y</AvatarFallback></Avatar>}
-                        </div>
-                    ))}
-                    <div ref={messagesEndRef} />
+                        ))}
+                        <div ref={messagesEndRef} />
+                    </div>
                 </main>
                 
                 <footer className="p-4 border-t shrink-0">
