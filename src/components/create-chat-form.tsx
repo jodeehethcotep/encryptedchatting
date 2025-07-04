@@ -17,7 +17,7 @@ import { Copy, PlusCircle, Trash2, ArrowRight } from 'lucide-react';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/firebase';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { addChatSession } from '@/lib/storage';
 
 const optionSchema = z.object({
@@ -42,9 +42,18 @@ export function CreateChatForm() {
   const router = useRouter();
   const { toast } = useToast();
   const [sessionId, setSessionId] = useState('');
+  const [userId, setUserId] = useState('');
 
   useEffect(() => {
-    setSessionId(Math.floor(10000 + Math.random() * 90000).toString());
+    const newSessionId = Math.floor(10000 + Math.random() * 90000).toString();
+    setSessionId(newSessionId);
+    
+    let currentUserId = sessionStorage.getItem(`secretchat-userId-${newSessionId}`);
+    if (!currentUserId) {
+        currentUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+        sessionStorage.setItem(`secretchat-userId-${newSessionId}`, currentUserId);
+    }
+    setUserId(currentUserId);
   }, []);
 
   const form = useForm<FormValues>({
@@ -62,11 +71,17 @@ export function CreateChatForm() {
   });
 
   const onSubmit = async (data: FormValues) => {
+    if (!userId) {
+        toast({ title: 'Error', description: 'User ID not found. Please refresh.', variant: 'destructive' });
+        return;
+    }
     try {
       const sessionData = {
         ...data,
         selfDestructSeconds: data.selfDestructSeconds[0],
-        createdAt: new Date().toISOString(),
+        createdAt: serverTimestamp(),
+        participantCount: 1,
+        participants: [userId],
       };
       
       const sessionDocRef = doc(db, 'sessions', sessionId);
@@ -117,7 +132,7 @@ export function CreateChatForm() {
               name="selfDestructSeconds"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Message Self-Destruct Timer</FormLabel>
+                  <FormLabel>Message Self-Destruct Timer (after seen)</FormLabel>
                   <div className="flex items-center gap-4">
                     <FormControl>
                         <Slider

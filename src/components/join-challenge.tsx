@@ -11,12 +11,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Terminal } from "lucide-react";
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, runTransaction, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { addChatSession } from '@/lib/storage';
 
 type SessionData = {
     selfDestructSeconds: number;
     kickOnWrongAnswer: boolean;
+    participants: string[];
+    participantCount: number;
     questions: {
         question: string;
         options: { text: string }[];
@@ -30,20 +32,38 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [showKickDialog, setShowKickDialog] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [userId, setUserId] = useState('');
 
     useEffect(() => {
+        let currentUserId = sessionStorage.getItem(`secretchat-userId-${sessionId}`);
+        if (!currentUserId) {
+            currentUserId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+            sessionStorage.setItem(`secretchat-userId-${sessionId}`, currentUserId);
+        }
+        setUserId(currentUserId);
+
         const fetchSession = async () => {
             try {
                 const sessionDocRef = doc(db, 'sessions', sessionId);
                 const sessionDoc = await getDoc(sessionDocRef);
 
                 if (sessionDoc.exists()) {
-                    const parsedData = sessionDoc.data() as SessionData;
-                    if (!parsedData.questions || parsedData.questions.length === 0) {
+                    const data = sessionDoc.data() as SessionData;
+                    if (data.participants && data.participants.includes(currentUserId)) {
                         addChatSession(sessionId);
                         router.push(`/chat/${sessionId}`);
+                        return;
+                    }
+                     if (data.participantCount >= 2) {
+                        setError('This room is full and can no longer be joined.');
+                        setLoading(false);
+                        return;
+                    }
+                    if (!data.questions || data.questions.length === 0) {
+                        await handleJoin();
                     } else {
-                        setSession(parsedData);
+                        setSession(data);
                     }
                 } else {
                     setError('Session not found or has expired.');
@@ -56,9 +76,47 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
             }
         }
         fetchSession();
-    }, [sessionId, router]);
+    }, [sessionId, router, userId]);
     
     const form = useForm();
+    
+    const handleJoin = async () => {
+        setIsSubmitting(true);
+        try {
+            const sessionDocRef = doc(db, 'sessions', sessionId);
+            await runTransaction(db, async (transaction) => {
+                const sessionDoc = await transaction.get(sessionDocRef);
+                if (!sessionDoc.exists()) throw new Error("Session disappeared.");
+                
+                const data = sessionDoc.data();
+                const participants = data.participants || [];
+
+                if (participants.length >= 2) throw new Error("This room is full.");
+                if (participants.includes(userId)) return;
+
+                const newParticipants = [...participants, userId];
+                transaction.update(sessionDocRef, { 
+                    participants: newParticipants,
+                    participantCount: newParticipants.length 
+                });
+                
+                const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
+                await addDoc(messagesColRef, {
+                    text: `${userId.substring(0, 12)} has joined the chat.`,
+                    senderId: 'system',
+                    type: 'system',
+                    createdAt: serverTimestamp(),
+                    seenAt: null
+                });
+            });
+
+            addChatSession(sessionId);
+            router.push(`/chat/${sessionId}`);
+        } catch (e: any) {
+            setError(e.message);
+            setIsSubmitting(false);
+        }
+    }
     
     const onSubmit = (data: any) => {
         if (!session) return;
@@ -74,8 +132,7 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
         }
         
         if (allCorrect) {
-            addChatSession(sessionId);
-            router.push(`/chat/${sessionId}`);
+            handleJoin();
         } else {
             if (session.kickOnWrongAnswer) {
                 setShowKickDialog(true);
@@ -138,7 +195,10 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
                                 />
                             ))}
                             <CardFooter className="p-0 pt-4">
-                                <Button type="submit" className="w-full">Submit Answers</Button>
+                                <Button type="submit" className="w-full" disabled={isSubmitting}>
+                                    {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    Submit Answers
+                                </Button>
                             </CardFooter>
                         </form>
                     </Form>
