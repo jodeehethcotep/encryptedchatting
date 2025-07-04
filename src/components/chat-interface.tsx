@@ -79,23 +79,45 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
         if (!userId) return;
 
         const sessionDocRef = doc(db, 'sessions', sessionId);
-        updateDoc(sessionDocRef, {
-            [`presence.${userId}.status`]: 'online',
-            [`presence.${userId}.last_active`]: serverTimestamp()
-        }).catch(() => {});
-
-        const setOffline = () => {
-             updateDoc(sessionDocRef, {
-                [`presence.${userId}.status`]: 'offline',
-                [`presence.${userId}.last_active`]: serverTimestamp()
-            }).catch(() => {});
+        
+        const updatePresence = (status: 'online' | 'offline') => {
+            // Browsers can prerender pages, in which case we don't want to set presence.
+            if (typeof document !== 'undefined' && document.visibilityState === 'prerendering') return; 
+            updateDoc(sessionDocRef, {
+                [`presence.${userId}.status`]: status,
+                [`presence.${userId}.last_active`]: serverTimestamp(),
+            }).catch((err) => console.error("Presence update failed:", err));
         };
 
-        window.addEventListener('beforeunload', setOffline);
+        // Set online when component mounts and is visible
+        updatePresence('online');
+
+        const handleVisibilityChange = () => {
+            if (typeof document !== 'undefined') {
+                 updatePresence(document.hidden ? 'offline' : 'online');
+            }
+        };
+
+        // Set offline for good when tab is closed
+        const handleBeforeUnload = () => {
+             updatePresence('offline');
+        };
+        
+        if (typeof document !== 'undefined') {
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+        }
+        if (typeof window !== 'undefined') {
+            window.addEventListener('beforeunload', handleBeforeUnload);
+        }
 
         return () => {
-            setOffline();
-            window.removeEventListener('beforeunload', setOffline);
+            updatePresence('offline');
+            if (typeof document !== 'undefined') {
+                document.removeEventListener('visibilitychange', handleVisibilityChange);
+            }
+             if (typeof window !== 'undefined') {
+                window.removeEventListener('beforeunload', handleBeforeUnload);
+            }
         };
     }, [sessionId, userId]);
 
@@ -255,7 +277,8 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             await batch.commit();
         } catch (error) {
             if (error instanceof Error && error.message.includes('No document to update')) {
-                console.log("A message was deleted before it could be marked as seen. This is expected.");
+                // This is an expected race condition if a message is deleted before it's marked as read.
+                // We can safely ignore it.
             } else {
                 console.error("Error marking messages as read:", error);
             }
@@ -268,6 +291,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             setNewMessage('');
 
             try {
+                // This logic is now decoupled. First send the message.
                 await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
                     text: textToSend,
                     senderId: userId,
@@ -276,10 +300,12 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                     seenAt: null,
                 });
 
+                // Then, separately, try to mark previous messages as read.
+                // If this fails, it won't prevent the new message from being sent.
                 await markMessagesAsRead();
             } catch (error) {
                 console.error("Failed to send message:", error);
-                setNewMessage(textToSend);
+                setNewMessage(textToSend); // Re-populate the textarea if sending failed
             }
         }
     };
