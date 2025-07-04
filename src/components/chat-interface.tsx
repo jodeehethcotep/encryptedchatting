@@ -84,13 +84,19 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             [`presence.${userId}.last_active`]: serverTimestamp()
         }).catch(() => {});
 
-        return () => {
+        const setOffline = () => {
              updateDoc(sessionDocRef, {
                 [`presence.${userId}.status`]: 'offline',
                 [`presence.${userId}.last_active`]: serverTimestamp()
             }).catch(() => {});
         };
 
+        window.addEventListener('beforeunload', setOffline);
+
+        return () => {
+            setOffline();
+            window.removeEventListener('beforeunload', setOffline);
+        };
     }, [sessionId, userId]);
 
 
@@ -231,62 +237,68 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     };
 
     useEffect(scrollToBottom, [messages]);
-
-    const markOtherMessagesAsRead = async () => {
+    
+    const markMessagesAsRead = async () => {
         if (!otherParticipantId) return;
-
+    
         const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
         const q = query(messagesColRef, where('senderId', '==', otherParticipantId), where('seenAt', '==', null));
-        
+    
         try {
             const unreadSnapshot = await getDocs(q);
-            if (unreadSnapshot.empty) return null;
-
+            if (unreadSnapshot.empty) return;
+    
             const batch = writeBatch(db);
             unreadSnapshot.forEach(doc => {
                 batch.update(doc.ref, { seenAt: serverTimestamp() });
             });
-            return batch;
-        } catch (e) {
-            console.error("Failed to get unread messages to mark as read", e);
-            return null;
+            await batch.commit();
+        } catch (error) {
+            if (error instanceof Error && error.message.includes('No document to update')) {
+                console.log("A message was deleted before it could be marked as seen. This is expected.");
+            } else {
+                console.error("Error marking messages as read:", error);
+            }
         }
     };
 
     const handleSendMessage = async () => {
         if (newMessage.trim() && userId) {
-            const batch = await markOtherMessagesAsRead() || writeBatch(db);
-
-            const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
-            const newMessageRef = doc(messagesColRef);
-            batch.set(newMessageRef, {
-                text: newMessage,
-                senderId: userId,
-                type: 'text',
-                createdAt: serverTimestamp(),
-                seenAt: null,
-            });
-
-            await batch.commit();
+            const textToSend = newMessage;
             setNewMessage('');
+
+            try {
+                await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+                    text: textToSend,
+                    senderId: userId,
+                    type: 'text',
+                    createdAt: serverTimestamp(),
+                    seenAt: null,
+                });
+
+                await markMessagesAsRead();
+            } catch (error) {
+                console.error("Failed to send message:", error);
+                setNewMessage(textToSend);
+            }
         }
     };
 
     const handleSendImage = async () => {
         if (userId) {
-            const batch = await markOtherMessagesAsRead() || writeBatch(db);
+             try {
+                await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+                    imageUrl: `https://placehold.co/400x300.png`,
+                    senderId: userId,
+                    type: 'image',
+                    createdAt: serverTimestamp(),
+                    seenAt: null,
+                });
 
-            const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
-            const newImageMessageRef = doc(messagesColRef);
-            batch.set(newImageMessageRef, {
-                imageUrl: `https://placehold.co/400x300.png`,
-                senderId: userId,
-                type: 'image',
-                createdAt: serverTimestamp(),
-                seenAt: null,
-            });
-
-            await batch.commit();
+                await markMessagesAsRead();
+            } catch (error) {
+                console.error("Failed to send image:", error);
+            }
         }
     };
 
