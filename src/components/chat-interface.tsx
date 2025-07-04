@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Send, Paperclip, Eye, X, ShieldAlert } from 'lucide-react';
+import { Send, Paperclip, ShieldAlert } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Image from 'next/image';
 import { db } from '@/lib/firebase';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp } from 'firebase/firestore';
@@ -31,7 +30,6 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState('');
     const [settings, setSettings] = useState<SessionSettings>({ selfDestructSeconds: 0 });
-    const [imageToView, setImageToView] = useState<{ id: string, url: string } | null>(null);
     const messagesEndRef = useRef<null | HTMLDivElement>(null);
     const [userId, setUserId] = useState('');
     const destructionTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -106,7 +104,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 };
                 fetchedMessages.push(message);
 
-                if (data.createdAt && settings.selfDestructSeconds > 0 && message.type === 'text') {
+                if (data.createdAt && settings.selfDestructSeconds > 0 && message.sender !== 'System') {
                     if (destructionTimers.current.has(doc.id)) {
                         return; 
                     }
@@ -172,20 +170,6 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             });
         }
     };
-    
-    const handleViewImage = (msg: Message) => {
-        if (msg.imageUrl) {
-            setImageToView({ id: msg.id, url: msg.imageUrl });
-        }
-    };
-
-    const handleCloseImageView = () => {
-        if (imageToView) {
-            const msgRef = doc(db, 'sessions', sessionId, 'messages', imageToView.id);
-            deleteDoc(msgRef);
-        }
-        setImageToView(null);
-    };
 
     return (
         <TooltipProvider>
@@ -219,12 +203,18 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                             return (
                                 <div key={msg.id} className={`flex items-end gap-2 animate-in fade-in-20 slide-in-from-bottom-4 duration-300 ${msg.sender === 'You' ? 'justify-end' : ''}`}>
                                     {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>{msg.senderId.substring(0, 1).toUpperCase()}</AvatarFallback></Avatar>}
-                                    <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'}`}>
+                                    <div className={`max-w-xs md:max-w-md rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'} ${msg.type === 'text' ? 'p-3' : 'p-1'}`}>
                                         {msg.type === 'text' && <p className="text-sm break-words">{msg.text}</p>}
-                                        {msg.type === 'image' && (
-                                            <Button variant={msg.sender === 'You' ? 'secondary' : 'default' } onClick={() => handleViewImage(msg)} className="w-full">
-                                                <Eye className="mr-2 h-4 w-4" /> View Once Image
-                                            </Button>
+                                        {msg.type === 'image' && msg.imageUrl && (
+                                            <Image
+                                                src={msg.imageUrl}
+                                                alt="Ephemeral Image"
+                                                width={250}
+                                                height={250}
+                                                className="rounded-md object-cover cursor-pointer"
+                                                onClick={() => window.open(msg.imageUrl, '_blank')}
+                                                data-ai-hint="abstract texture"
+                                            />
                                         )}
                                     </div>
                                     {msg.sender === 'You' && <Avatar className="h-8 w-8"><AvatarFallback>Y</AvatarFallback></Avatar>}
@@ -252,29 +242,18 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                         <div className="absolute top-1/2 right-2 transform -translate-y-1/2 flex gap-1">
                             <Tooltip>
                                 <TooltipTrigger asChild><Button variant="ghost" size="icon" onClick={handleSendImage}><Paperclip className="w-5 h-5" /></Button></TooltipTrigger>
-                                <TooltipContent><p>Send view-once image</p></TooltipContent>
+                                <TooltipContent><p>Send an image</p></TooltipContent>
                             </Tooltip>
                             <Button size="icon" onClick={handleSendMessage} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></Button>
                         </div>
                     </div>
                      {settings.selfDestructSeconds > 0 && (
                         <p className="text-xs text-center text-muted-foreground mt-2">
-                            Text messages will self-destruct {settings.selfDestructSeconds} seconds after being sent.
+                            Messages and images will self-destruct {settings.selfDestructSeconds} seconds after being sent.
                         </p>
                     )}
                 </footer>
             </div>
-            
-            <Dialog open={!!imageToView} onOpenChange={(isOpen) => !isOpen && handleCloseImageView()}>
-                <DialogContent className="max-w-lg p-0" onEscapeKeyDown={handleCloseImageView} onPointerDownOutside={handleCloseImageView}>
-                    <DialogHeader className="p-4 flex flex-row items-center justify-between">
-                        <DialogTitle>View Once Image</DialogTitle>
-                        <Button variant="ghost" size="icon" onClick={handleCloseImageView}><X className="h-4 w-4"/></Button>
-                    </DialogHeader>
-                    {imageToView && <Image src={imageToView.url} alt="Secret Image" width={400} height={300} className="w-full h-auto" data-ai-hint="abstract texture" />}
-                    <p className="p-4 text-sm text-center text-muted-foreground">This image will be destroyed after you close this window.</p>
-                </DialogContent>
-            </Dialog>
         </TooltipProvider>
     );
 }
