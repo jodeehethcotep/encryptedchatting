@@ -46,9 +46,9 @@ export function JoinChallenge({ sessionId }: { sessionId: string }) {
                 } else {
                     setError('Session not found or has expired.');
                 }
-            } catch (e) {
+            } catch (e: any) {
                 console.error("Failed to load session:", e);
-                setError('Failed to load session data. Please check the ID and try again.');
+                setError(e.message || 'Failed to load session data. Please check the ID and try again.');
             } finally {
                 setLoading(false);
             }

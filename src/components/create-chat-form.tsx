@@ -72,11 +72,11 @@ export function CreateChatForm() {
       await setDoc(sessionDocRef, sessionData);
       
       router.push(`/chat/${sessionId}`);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating session:", error);
       toast({
-        title: 'Error',
-        description: 'Could not create session. Please try again.',
+        title: 'Error Creating Session',
+        description: error.message || 'Could not create session. Please try again.',
         variant: 'destructive'
       });
     }
