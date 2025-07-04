@@ -49,7 +49,7 @@ export function CreateChatForm() {
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      selfDestructSeconds: [15],
+      selfDestructSeconds: [2],
       kickOnWrongAnswer: true,
       questions: [],
     },
@@ -118,7 +118,7 @@ export function CreateChatForm() {
                   <div className="flex items-center gap-4">
                     <FormControl>
                         <Slider
-                            min={5}
+                            min={2}
                             max={60}
                             step={1}
                             value={field.value}
