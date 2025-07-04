@@ -34,6 +34,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     const [imageToView, setImageToView] = useState<{ id: string, url: string } | null>(null);
     const messagesEndRef = useRef<null | HTMLDivElement>(null);
     const [userId, setUserId] = useState('');
+    const destructionTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
     useEffect(() => {
         let currentUserId = sessionStorage.getItem(`secretchat-userId-${sessionId}`);
@@ -62,14 +63,18 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
     }, [sessionId, router]);
 
     useEffect(() => {
-        if (!sessionId || !userId || settings.selfDestructSeconds === 0) return;
+        if (!sessionId || !userId || settings.selfDestructSeconds <= 0) return;
 
         const q = query(collection(db, 'sessions', sessionId, 'messages'), orderBy('createdAt', 'asc'));
 
         const unsubscribe = onSnapshot(q, (querySnapshot) => {
             const fetchedMessages: Message[] = [];
+            const currentMessageIds = new Set<string>();
+
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
+                currentMessageIds.add(doc.id);
+
                 const message: Message = {
                     id: doc.id,
                     sender: data.senderId === userId ? 'You' : 'Other',
@@ -82,6 +87,10 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 fetchedMessages.push(message);
 
                 if (data.createdAt && settings.selfDestructSeconds > 0 && message.type === 'text') {
+                    if (destructionTimers.current.has(doc.id)) {
+                        return; // Timer already set, do nothing.
+                    }
+
                     const messageTime = data.createdAt.toDate();
                     const destructionTime = messageTime.getTime() + settings.selfDestructSeconds * 1000;
                     const now = Date.now();
@@ -89,16 +98,32 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                     if (destructionTime < now) {
                         deleteDoc(doc.ref).catch(err => console.error("Error deleting old message:", err));
                     } else {
-                        setTimeout(() => {
+                        const timeoutId = setTimeout(() => {
                            deleteDoc(doc.ref).catch(err => console.error("Error deleting message:", err));
+                           destructionTimers.current.delete(doc.id);
                         }, destructionTime - now);
+                        destructionTimers.current.set(doc.id, timeoutId);
                     }
                 }
             });
+
+            // Clean up timers for messages that were deleted by other means
+            destructionTimers.current.forEach((timeoutId, messageId) => {
+                if (!currentMessageIds.has(messageId)) {
+                    clearTimeout(timeoutId);
+                    destructionTimers.current.delete(messageId);
+                }
+            });
+            
             setMessages(fetchedMessages);
         });
 
-        return () => unsubscribe();
+        return () => {
+            unsubscribe();
+            // Clear all pending timers when the component unmounts or dependencies change
+            destructionTimers.current.forEach(timeoutId => clearTimeout(timeoutId));
+            destructionTimers.current.clear();
+        };
     }, [sessionId, userId, settings.selfDestructSeconds]);
     
     const scrollToBottom = () => {
