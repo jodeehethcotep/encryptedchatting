@@ -9,7 +9,7 @@ import { Send, Paperclip, ShieldAlert, ArrowLeft, Eye } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Image from 'next/image';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp, runTransaction, updateDoc, writeBatch, setDoc } from 'firebase/firestore';
+import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, getDoc, deleteDoc, Timestamp, runTransaction, updateDoc, writeBatch, setDoc, where, getDocs } from 'firebase/firestore';
 
 type Message = {
     id: string;
@@ -24,6 +24,7 @@ type Message = {
 
 type SessionData = {
     selfDestructSeconds: number;
+    selfDestructUnseenSeconds: number;
     participants: string[];
     participantCount: number;
 };
@@ -124,16 +125,19 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
         const q = query(collection(db, 'sessions', sessionId, 'messages'), orderBy('createdAt', 'asc'));
         
-        const unsubscribe = onSnapshot(q, async (querySnapshot) => {
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
             const fetchedMessages: Message[] = [];
-            const currentMessageIds = new Set<string>();
-            const batch = writeBatch(db);
-            let updatesMade = false;
+            const currentMessageIds = new Set(querySnapshot.docs.map(doc => doc.id));
+            
+            destructionTimers.current.forEach((timeoutId, messageId) => {
+                if (!currentMessageIds.has(messageId)) {
+                    clearTimeout(timeoutId);
+                    destructionTimers.current.delete(messageId);
+                }
+            });
 
             querySnapshot.forEach((doc) => {
                 const data = doc.data();
-                currentMessageIds.add(doc.id);
-
                 const message: Message = {
                     id: doc.id,
                     sender: data.senderId === 'system' ? 'System' : (data.senderId === userId ? 'You' : 'Other'),
@@ -146,24 +150,31 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 };
                 fetchedMessages.push(message);
 
-                if (otherParticipantId && message.senderId === otherParticipantId && !message.seenAt) {
-                    batch.update(doc.ref, { seenAt: serverTimestamp() });
-                    updatesMade = true;
+                if (destructionTimers.current.has(doc.id)) {
+                   clearTimeout(destructionTimers.current.get(doc.id)!);
+                   destructionTimers.current.delete(doc.id);
                 }
 
-                if (sessionData.selfDestructSeconds > 0 && message.sender !== 'System' && message.seenAt) {
-                    if (destructionTimers.current.has(doc.id)) {
-                        return;
-                    }
-                    const seenTime = message.seenAt.toDate();
-                    const destructionTime = seenTime.getTime() + sessionData.selfDestructSeconds * 1000;
-                    const now = Date.now();
-
-                    if (destructionTime < now) {
-                        deleteDoc(doc.ref).catch(err => console.error("Error deleting old message:", err));
+                const now = Date.now();
+                
+                if (sessionData.selfDestructSeconds > 0 && message.seenAt) {
+                    const destructionTime = message.seenAt.toDate().getTime() + sessionData.selfDestructSeconds * 1000;
+                    if (destructionTime <= now) {
+                        deleteDoc(doc.ref).catch(err => console.error("Error deleting old seen message:", err));
                     } else {
                         const timeoutId = setTimeout(() => {
-                            deleteDoc(doc.ref).catch(err => console.error("Error deleting message:", err));
+                            deleteDoc(doc.ref).catch(err => console.error("Error deleting seen message:", err));
+                            destructionTimers.current.delete(doc.id);
+                        }, destructionTime - now);
+                        destructionTimers.current.set(doc.id, timeoutId);
+                    }
+                } else if (sessionData.selfDestructUnseenSeconds > 0 && !message.seenAt && message.createdAt) {
+                    const destructionTime = message.createdAt.toDate().getTime() + sessionData.selfDestructUnseenSeconds * 1000;
+                    if (destructionTime <= now) {
+                        deleteDoc(doc.ref).catch(err => console.error("Error deleting old unseen message:", err));
+                    } else {
+                        const timeoutId = setTimeout(() => {
+                            deleteDoc(doc.ref).catch(err => console.error("Error deleting unseen message:", err));
                             destructionTimers.current.delete(doc.id);
                         }, destructionTime - now);
                         destructionTimers.current.set(doc.id, timeoutId);
@@ -171,17 +182,6 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 }
             });
             
-            if (updatesMade) {
-                await batch.commit();
-            }
-
-            destructionTimers.current.forEach((timeoutId, messageId) => {
-                if (!currentMessageIds.has(messageId)) {
-                    clearTimeout(timeoutId);
-                    destructionTimers.current.delete(messageId);
-                }
-            });
-
             setMessages(fetchedMessages);
         });
 
@@ -190,7 +190,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
             destructionTimers.current.forEach(timeoutId => clearTimeout(timeoutId));
             destructionTimers.current.clear();
         };
-    }, [sessionId, userId, sessionData, otherParticipantId]);
+    }, [sessionId, userId, sessionData]);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -198,28 +198,61 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
     useEffect(scrollToBottom, [messages]);
 
+    const markOtherMessagesAsRead = async () => {
+        if (!otherParticipantId) return;
+
+        const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
+        const q = query(messagesColRef, where('senderId', '==', otherParticipantId), where('seenAt', '==', null));
+        
+        try {
+            const unreadSnapshot = await getDocs(q);
+            if (unreadSnapshot.empty) return null;
+
+            const batch = writeBatch(db);
+            unreadSnapshot.forEach(doc => {
+                batch.update(doc.ref, { seenAt: serverTimestamp() });
+            });
+            return batch;
+        } catch (e) {
+            console.error("Failed to get unread messages to mark as read", e);
+            return null;
+        }
+    };
+
     const handleSendMessage = async () => {
         if (newMessage.trim() && userId) {
-            await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+            const batch = await markOtherMessagesAsRead() || writeBatch(db);
+
+            const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
+            const newMessageRef = doc(messagesColRef);
+            batch.set(newMessageRef, {
                 text: newMessage,
                 senderId: userId,
                 type: 'text',
                 createdAt: serverTimestamp(),
                 seenAt: null,
             });
+
+            await batch.commit();
             setNewMessage('');
         }
     };
 
     const handleSendImage = async () => {
         if (userId) {
-            await addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+            const batch = await markOtherMessagesAsRead() || writeBatch(db);
+
+            const messagesColRef = collection(db, 'sessions', sessionId, 'messages');
+            const newImageMessageRef = doc(messagesColRef);
+            batch.set(newImageMessageRef, {
                 imageUrl: `https://placehold.co/400x300.png`,
                 senderId: userId,
                 type: 'image',
                 createdAt: serverTimestamp(),
                 seenAt: null,
             });
+
+            await batch.commit();
         }
     };
 
@@ -315,9 +348,10 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                             <Button size="icon" onClick={handleSendMessage} disabled={!newMessage.trim()}><Send className="w-5 h-5" /></Button>
                         </div>
                     </div>
-                     {sessionData?.selfDestructSeconds > 0 && (
+                     {sessionData && (
                         <p className="text-xs text-center text-muted-foreground mt-2">
-                           Messages self-destruct {sessionData.selfDestructSeconds} seconds after being seen.
+                            {sessionData.selfDestructSeconds > 0 && `Seen messages self-destruct after ${sessionData.selfDestructSeconds}s. `}
+                            {sessionData.selfDestructUnseenSeconds > 0 && `Unseen messages self-destruct after ${sessionData.selfDestructUnseenSeconds}s.`}
                         </p>
                     )}
                 </footer>

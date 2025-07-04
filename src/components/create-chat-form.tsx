@@ -32,6 +32,7 @@ const questionSchema = z.object({
 
 const formSchema = z.object({
   selfDestructSeconds: z.array(z.number()),
+  selfDestructUnseenSeconds: z.array(z.number()),
   kickOnWrongAnswer: z.boolean(),
   questions: z.array(questionSchema),
 });
@@ -60,6 +61,7 @@ export function CreateChatForm() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       selfDestructSeconds: [2],
+      selfDestructUnseenSeconds: [300],
       kickOnWrongAnswer: true,
       questions: [],
     },
@@ -79,6 +81,7 @@ export function CreateChatForm() {
       const sessionData = {
         ...data,
         selfDestructSeconds: data.selfDestructSeconds[0],
+        selfDestructUnseenSeconds: data.selfDestructUnseenSeconds[0],
         createdAt: serverTimestamp(),
         participantCount: 1,
         participants: [userId],
@@ -132,7 +135,7 @@ export function CreateChatForm() {
               name="selfDestructSeconds"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Message Self-Destruct Timer (after seen)</FormLabel>
+                  <FormLabel>Seen Message Self-Destruct Timer</FormLabel>
                   <div className="flex items-center gap-4">
                     <FormControl>
                         <Slider
@@ -144,6 +147,27 @@ export function CreateChatForm() {
                         />
                     </FormControl>
                     <span className="font-mono text-primary">{field.value?.[0]}s</span>
+                  </div>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="selfDestructUnseenSeconds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Unseen Message Self-Destruct Timer</FormLabel>
+                  <div className="flex items-center gap-4">
+                    <FormControl>
+                        <Slider
+                            min={10}
+                            max={3600}
+                            step={10}
+                            value={field.value}
+                            onValueChange={field.onChange}
+                        />
+                    </FormControl>
+                     <span className="font-mono text-primary w-20 text-right">{field.value?.[0]}s ({Math.round(field.value?.[0]/60)} min)</span>
                   </div>
                 </FormItem>
               )}
