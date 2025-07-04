@@ -14,11 +14,11 @@ import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, g
 
 type Message = {
     id: string;
-    sender: 'You' | 'Other';
+    sender: 'You' | 'Other' | 'System';
     senderId: string;
     text?: string;
     imageUrl?: string;
-    type: 'text' | 'image';
+    type: 'text' | 'image' | 'system';
     createdAt: Timestamp | null;
 };
 
@@ -61,9 +61,29 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
         fetchSessionData();
     }, [sessionId, router]);
+    
+    useEffect(() => {
+        const handleKeyPress = (e: KeyboardEvent) => {
+            if (e.key === 'PrintScreen') {
+                e.preventDefault();
+                addDoc(collection(db, 'sessions', sessionId, 'messages'), {
+                    text: 'A screenshot may have been taken.',
+                    senderId: 'system',
+                    type: 'system',
+                    createdAt: serverTimestamp(),
+                });
+            }
+        };
+
+        window.addEventListener('keyup', handleKeyPress);
+
+        return () => {
+            window.removeEventListener('keyup', handleKeyPress);
+        };
+    }, [sessionId]);
 
     useEffect(() => {
-        if (!sessionId || !userId || settings.selfDestructSeconds <= 0) return;
+        if (!sessionId || !userId) return;
 
         const q = query(collection(db, 'sessions', sessionId, 'messages'), orderBy('createdAt', 'asc'));
 
@@ -77,7 +97,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
                 const message: Message = {
                     id: doc.id,
-                    sender: data.senderId === userId ? 'You' : 'Other',
+                    sender: data.senderId === 'system' ? 'System' : (data.senderId === userId ? 'You' : 'Other'),
                     senderId: data.senderId,
                     text: data.text,
                     imageUrl: data.imageUrl,
@@ -88,7 +108,7 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
                 if (data.createdAt && settings.selfDestructSeconds > 0 && message.type === 'text') {
                     if (destructionTimers.current.has(doc.id)) {
-                        return; // Timer already set, do nothing.
+                        return; 
                     }
 
                     const messageTime = data.createdAt.toDate();
@@ -107,7 +127,6 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 }
             });
 
-            // Clean up timers for messages that were deleted by other means
             destructionTimers.current.forEach((timeoutId, messageId) => {
                 if (!currentMessageIds.has(messageId)) {
                     clearTimeout(timeoutId);
@@ -120,7 +139,6 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
 
         return () => {
             unsubscribe();
-            // Clear all pending timers when the component unmounts or dependencies change
             destructionTimers.current.forEach(timeoutId => clearTimeout(timeoutId));
             destructionTimers.current.clear();
         };
@@ -189,20 +207,30 @@ export function ChatInterface({ sessionId }: { sessionId: string }) {
                 
                 <main className="flex-1 overflow-y-auto p-4 flex flex-col justify-end">
                     <div className="space-y-4">
-                        {messages.map((msg) => (
-                            <div key={msg.id} className={`flex items-end gap-2 animate-in fade-in-20 slide-in-from-bottom-4 duration-300 ${msg.sender === 'You' ? 'justify-end' : ''}`}>
-                                {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>{msg.senderId.substring(0, 1).toUpperCase()}</AvatarFallback></Avatar>}
-                                <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'}`}>
-                                    {msg.type === 'text' && <p className="text-sm break-words">{msg.text}</p>}
-                                    {msg.type === 'image' && (
-                                        <Button variant={msg.sender === 'You' ? 'secondary' : 'default' } onClick={() => handleViewImage(msg)} className="w-full">
-                                            <Eye className="mr-2 h-4 w-4" /> View Once Image
-                                        </Button>
-                                    )}
+                        {messages.map((msg) => {
+                            if (msg.type === 'system') {
+                                return (
+                                    <div key={msg.id} className="flex justify-center items-center gap-2 my-2 animate-in fade-in-20">
+                                        <ShieldAlert className="w-4 h-4 text-destructive" />
+                                        <p className="text-xs text-destructive">{msg.text}</p>
+                                    </div>
+                                );
+                            }
+                            return (
+                                <div key={msg.id} className={`flex items-end gap-2 animate-in fade-in-20 slide-in-from-bottom-4 duration-300 ${msg.sender === 'You' ? 'justify-end' : ''}`}>
+                                    {msg.sender !== 'You' && <Avatar className="h-8 w-8"><AvatarFallback>{msg.senderId.substring(0, 1).toUpperCase()}</AvatarFallback></Avatar>}
+                                    <div className={`max-w-xs md:max-w-md p-3 rounded-lg shadow-sm ${msg.sender === 'You' ? 'bg-primary text-primary-foreground' : 'bg-card'}`}>
+                                        {msg.type === 'text' && <p className="text-sm break-words">{msg.text}</p>}
+                                        {msg.type === 'image' && (
+                                            <Button variant={msg.sender === 'You' ? 'secondary' : 'default' } onClick={() => handleViewImage(msg)} className="w-full">
+                                                <Eye className="mr-2 h-4 w-4" /> View Once Image
+                                            </Button>
+                                        )}
+                                    </div>
+                                    {msg.sender === 'You' && <Avatar className="h-8 w-8"><AvatarFallback>Y</AvatarFallback></Avatar>}
                                 </div>
-                                {msg.sender === 'You' && <Avatar className="h-8 w-8"><AvatarFallback>Y</AvatarFallback></Avatar>}
-                            </div>
-                        ))}
+                            );
+                        })}
                         <div ref={messagesEndRef} />
                     </div>
                 </main>
